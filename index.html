@@ -140,6 +140,9 @@ button.row:active{background:var(--surface-2)}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--idle)}
 .dot.overdue{background:var(--over)} .dot.soon,.dot.partial{background:var(--soon)} .dot.paid{background:var(--ok)} .dot.upcoming{background:var(--idle)}
 .groups{display:grid;gap:14px}
+.pay-months{display:grid;gap:6px}
+.pay-months .lbl{font-size:13px;font-weight:600;color:var(--muted)}
+.pay-months .chips{flex-wrap:wrap;overflow:visible}
 .pw{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--ink);letter-spacing:.5px}
 code.pw{background:var(--surface-2);padding:2px 6px;border-radius:6px;user-select:all;-webkit-user-select:all;overflow-wrap:anywhere}
 .acct-head{display:flex;gap:12px;align-items:center;padding:14px 16px;background:var(--surface-2);border-bottom:1px solid var(--line)}
@@ -812,13 +815,16 @@ function paySheet(cid){
   if(!cid){const need=S.customers.map(c=>({c,i:info(c)})).filter(r=>r.c.active).sort((a,b)=>a.i.days-b.i.days);cid=(need[0]||{c:act[0]}).c.id}
   openSheet(sheetHead('Record payment')+'<form class="form" id="payForm">'
    +'<label>Customer<select id="payCust">'+act.map(c=>'<option value="'+c.id+'"'+(c.id===cid?' selected':'')+'>'+esc(c.name)+' · '+esc(c.service)+'</option>').join('')+'</select></label>'
+   +'<div class="pay-months"><span class="lbl">How many months are they paying?</span><div class="chips" id="payMonths">'+[1,2,3,4,6,12].map(n=>'<button type="button" class="chip" data-action="pay-months" data-n="'+n+'" aria-pressed="false">'+n+(n===1?' month':' months')+'</button>').join('')+'</div></div>'
    +'<div class="grid2"><label>Amount ('+esc(S.settings.currency)+')<input id="payAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required></label><label>Date<input id="payDate" type="date" value="'+today()+'" required></label></div>'
    +'<label>Method<select id="payMethod">'+METHODS.map(m=>'<option'+(m===(S.settings.defaultMethod||'Cash')?' selected':'')+'>'+m+'</option>').join('')+'</select></label>'
    +'<label>Note (optional)<input id="payNote" type="text" placeholder="e.g. paid for 2 months"></label>'
    +'<p class="preview" id="payPreview"></p><button class="btn primary block" type="submit">Save payment</button></form>');
   setPayDefault(); updatePayPreview();
 }
-function setPayDefault(){const c=S.customers.find(c=>c.id===$('#payCust').value);if(c)$('#payAmt').value=info(c).owed}
+function monthsAmount(c,n){const i=info(c),cyc=+c.cycle||1;let t=0;for(let k=i.periods;k<i.periods+n;k++)t+=priceAt(c,addMonths(c.firstDue,k*cyc));return r2(Math.max(0,t-i.credit))}
+function setPayMonths(n){const c=S.customers.find(c=>c.id===$('#payCust').value);U.payN=n;document.querySelectorAll('#payMonths .chip').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.n===n)));if(c&&n)$('#payAmt').value=monthsAmount(c,n);updatePayPreview()}
+function setPayDefault(){const c=S.customers.find(c=>c.id===$('#payCust').value);if(!c)return;const i=info(c);setPayMonths(Math.max(1,Math.min(12,i.missed||1)))}
 function updatePayPreview(){
   const c=S.customers.find(c=>c.id===$('#payCust')?.value); const el=$('#payPreview'); if(!c||!el)return;
   const i=info(c), amt=+$('#payAmt').value||0, price=priceAt(c,i.nextDue);
@@ -826,7 +832,7 @@ function updatePayPreview(){
   const sim=simPeriods(c,i.total+amt), per=sim.k, cr=sim.credit, nd=addMonths(c.firstDue,per*c.cycle), covered=per-i.periods;
   let s='Currently due '+fdate(i.nextDue,{month:'short',day:'numeric'})+'. ';
   if(covered<=0)s+='This is a part payment: '+money(cr)+' of '+money(price)+' paid toward it.';
-  else s+='Covers '+covered+' period'+(covered>1?'s':'')+'. Next due <b>'+fdate(nd,{weekday:'short',month:'short',day:'numeric'})+'</b>'+(cr>0?', with '+money(cr)+' credit toward it.':'.');
+  else s+='Covers '+covered+(+c.cycle===1?' month':' period')+(covered>1?'s':'')+(covered>1?' ('+fdate(i.nextDue,{month:'short',day:'numeric'})+' to '+fdate(addDays(nd,-1),{month:'short',day:'numeric',year:nd.slice(0,4)!==today().slice(0,4)?'numeric':undefined})+')':'')+'. Next due <b>'+fdate(nd,{weekday:'short',month:'short',day:'numeric'})+'</b>'+(cr>0?', with '+money(cr)+' credit toward it.':'.');
   el.innerHTML=s;
 }
 
@@ -968,6 +974,7 @@ document.addEventListener('click',e=>{
     case 'cust-group':U.custGroup=el.dataset.v==='1';S.settings.custGroup=U.custGroup;save();render();break;
     case 'add-to-acct':U.preAcct=id;custForm(null);U.preAcct=null;break;
     case 'acct-remove':if(armed(el,'Tap again to remove')){const c=S.customers.find(c=>c.id===id);if(c){const an=acctName(c.accountId);logEv('cust','Removed from account: '+c.name+' taken off '+aLabel(S.accounts.find(a=>a.id===c.accountId)));c.accountId='';save();renderCustList();toast(c.name+' removed from '+an+'. Their history is kept under No account.')}}break;
+    case 'pay-months':setPayMonths(+el.dataset.n);break;
     case 'card-hist':cardHistorySheet(id);break;
     case 'card-log-del':if(armed(el,'Delete?')){const a=S.accounts.find(a=>a.id===id);if(a){const e=(a.cardLog||[]).find(e=>e.id===el.dataset.k);a.cardLog=(a.cardLog||[]).filter(e=>e.id!==el.dataset.k);logEv('card','Gift card record deleted for '+aLabel(a)+(e?': loaded '+e.date+(e.amount?' '+money(e.amount):''):''));save();cardHistorySheet(id);render()}}break;
     case 'rep-year':U.repYear=(U.repYear||+today().slice(0,4))+(+el.dataset.d);render();break;
@@ -1016,7 +1023,7 @@ document.addEventListener('click',e=>{
 });
 document.addEventListener('input',e=>{
   if(e.target.id==='custSearch'){U.q=e.target.value;renderCustList()}
-  if(e.target.id==='payAmt')updatePayPreview();
+  if(e.target.id==='payAmt'){U.payN=0;document.querySelectorAll('#payMonths .chip').forEach(b=>b.setAttribute('aria-pressed','false'));updatePayPreview()}
   if(e.target.id==='cPrice'&&$('#cPriceFromWrap')){const c=S.customers.find(c=>c.id===$('#custForm').dataset.id);$('#cPriceFromWrap').hidden=!c||r2(e.target.value)===r2(c.price)}
 });
 document.addEventListener('change',e=>{
@@ -1033,6 +1040,7 @@ document.addEventListener('submit',e=>{
   if(f.id==='payForm'){
     const cid=$('#payCust').value, amt=r2($('#payAmt').value); if(!(amt>0)){toast('Enter an amount above zero.');return}
     const method=$('#payMethod').value;
+    if(U.payN>1&&!$('#payNote').value.trim())$('#payNote').value='Paid '+U.payN+' months';
     S.payments.push({id:uid(),customerId:cid,amount:amt,date:$('#payDate').value||today(),method,note:$('#payNote').value.trim()});
     {const pc=S.customers.find(c=>c.id===cid);logEv('pay','Payment recorded: '+money(amt)+' from '+cLabel(pc)+', dated '+($('#payDate').value||today())+', '+method+($('#payNote').value.trim()?', note: '+$('#payNote').value.trim():'')+'. Next due now '+info(pc).nextDue)}
     S.settings.lastMethod=method; save(); closeSheet(); render();
@@ -1078,6 +1086,6 @@ render();
 window.__subtrack={info,addMonths,dueEvents,exportText,S:()=>S};
 })();
 </script>
-<script>if("serviceWorker" in navigator && (((((location.protocol==="https:"||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")){navigator.serviceWorker.register("sw.js").catch(function(){})}try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}</script>
+<script>if("serviceWorker" in navigator && ((((((location.protocol==="https:"||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")||location.hostname==="localhost")){navigator.serviceWorker.register("sw.js").catch(function(){})}try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}</script>
 </body>
 </html>
